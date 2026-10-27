@@ -1,8 +1,10 @@
-# RunCat Neo → macOS 15 Sequoia backport starter kit
+# RunCat Neo → macOS 15 Sequoia backport kit v2 (2026-10-27 build-log fix)
 
-This kit is **not a compiled app**. It changes selected source code and supplies an Xcode/macOS GitHub Actions build job. The result has **not** been compiled or tested on macOS 15.6.1. It was prepared against the upstream **main tree SHA `592cd606e735ce20da98d9ae62ecf1a2608635d7`** (Oct 2026). Apache-2.0 upstream license applies to RunCat Neo.
+This kit is **not a compiled app**. It changes selected source code and supplies an Xcode/macOS GitHub Actions build job. The v2 result has **not** been compiled or tested on macOS 15.6.1. It was prepared against the upstream **main tree SHA `592cd606e735ce20da98d9ae62ecf1a2608635d7`** (Oct 2026). Apache-2.0 upstream license applies to RunCat Neo.
 
 ## Changes
+
+- **v2 build-log fix:** Replace 7 `Task.immediate` calls with `Task { ... }` and 8 `group.addImmediateTask` calls with `group.addTask { ... }`, resolving all 15 of the observed macOS 26 deployment-target compiler diagnostics in the Model target. These alternatives start asynchronously instead of inline; validate event subscription/updates on macOS 15.
 
 - App and package minimum deployment target: macOS 26 → 15.
 - Omit SwiftUI `windowResizeAnchor` (introduced macOS 26).
@@ -35,6 +37,10 @@ bash ./build_sequoia.sh
 
 The script creates `RunCatNeo-Sequoia-macOS15-arm64.zip` if compilation/signing succeeds. An Xcode 26.5 toolchain is needed to handle the upstream Swift 6.2 package manifests; **Xcode 26.5 generally requires a newer macOS than 15.6.1**. Building on a newer Mac or macOS CI runner and transferring the app to the M1 Max macOS 15 machine is the recommended approach.
 
+### Update an existing Actions repository
+
+If you already ran v1 and got `Task.immediate`/`addImmediateTask` availability errors, overwrite `port_sequoia.py` and `.github/workflows/build-sequoia.yml` with the corresponding v2 kit files. Commit and rerun the workflow. The original upstream commit remains pinned, so there is no need to remove and re-add the repo.
+
 ### Build in GitHub Actions (no App Store)
 
 1. Create a GitHub repository you control (it can be empty; no fork required). Add the two root scripts and `.github/workflows/build-sequoia.yml` from this kit, commit and push.
@@ -51,3 +57,7 @@ The script creates `RunCatNeo-Sequoia-macOS15-arm64.zip` if compilation/signing 
 - The donation/subscription UI relies on App Store products and may not work correctly in a separately signed personal build. Do not use it for purchases.
 - If running at macOS 15.6.1 is impossible after compiling, the problem may be an OS-26 symbol used at runtime or a dependency's compatibility bug. The macOS build machine alone cannot prove runtime compatibility.
 - Avoid manually removing Gatekeeper protection for unknown or unaudited binaries; follow organizational app security policies.
+
+## What the uploaded October 27 build log proved
+
+The GitHub Actions runner got as far as the `Model` target; Xcode 26.5 compiled for `arm64-apple-macos15.0` and reported precisely 15 platform-availability errors across 7 Store files: 7 calls to `Task.immediate` and 8 to `group.addImmediateTask`. An `LLVM Profile Error: Failed to write default.profraw` line also appeared, but it was not the reason Xcode exited with code 65. The v2 patch directly addresses the 15 compile errors; the remaining UI target, packaging, and execution on macOS 15 have not been verified.

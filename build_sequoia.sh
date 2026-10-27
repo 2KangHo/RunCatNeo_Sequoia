@@ -17,7 +17,7 @@ xcodebuild \
   ARCHS=arm64 \
   ONLY_ACTIVE_ARCH=YES \
   CODE_SIGNING_ALLOWED=NO \
-  build
+  build 2>&1 | tee "$ROOT/build_sequoia.log"
 APP="$DERIVED/Build/Products/Release/RunCatNeo.app"
 if [[ ! -d "$APP" ]]; then echo "Build did not produce $APP" >&2; exit 1; fi
 /usr/bin/codesign --force --deep --sign - "$APP"

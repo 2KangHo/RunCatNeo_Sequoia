@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Backport selected RunCat Neo macOS 26-only UI usages to macOS 15.
+"""Backport RunCat Neo macOS 26-only UI and concurrency APIs to macOS 15.
 
 Verified against upstream main tree SHA 592cd606e735ce20da98d9ae62ecf1a2608635d7.
 Run from the repository root. No non-stdlib Python dependencies.
+v2: also replaces Task.immediate and TaskGroup.addImmediateTask (15 compiler errors).
 This is a source-compatibility attempt, NOT a tested macOS executable.
 """
 from pathlib import Path
@@ -103,6 +104,62 @@ extension View {
     print(f"[patch] {path}: replaced macOS 26 drag-and-drop API")
 
 
+
+def patch_immediate_tasks():
+    """Replace the macOS 26-only Swift 6.2 task creation APIs.
+
+    These stream subscriptions run from viewAppeared handlers. The non-immediate
+    variants exist on macOS 15. They have slightly different scheduling order,
+    so the resulting app still needs runtime testing on Sequoia.
+    """
+    stores = "LocalPackage/Sources/Model/Stores/"
+    # (file name, Task.immediate count, group.addImmediateTask count)
+    targets = [
+        ("CustomMetricsSettings.swift", 1, 0),
+        ("Dashboard.swift", 1, 0),
+        ("DashboardMenu.swift", 1, 2),
+        ("MetricsBar.swift", 1, 3),
+        ("MetricsBarSettings.swift", 1, 0),
+        ("MetricsSettings.swift", 1, 0),
+        ("RunnerBar.swift", 1, 3),
+    ]
+    old_task = "task = Task.immediate { [weak self, appStateClient] in"
+    new_task = "task = Task { [weak self, appStateClient] in"
+    old_child = "group.addImmediateTask {"
+    new_child = "group.addTask {"
+    total = 0
+    for filename, expected_tasks, expected_children in targets:
+        rel = stores + filename
+        path = ROOT / rel
+        if not path.is_file():
+            raise SystemExit(f"Missing upstream source: {rel}")
+        source = path.read_text(encoding="utf-8")
+        task_count = source.count(old_task)
+        patched_task_count = source.count(new_task)
+        child_count = source.count(old_child)
+        patched_child_count = source.count(new_child)
+        if (task_count + patched_task_count != expected_tasks or
+                child_count + patched_child_count != expected_children):
+            raise SystemExit(
+                f"Unexpected upstream concurrency code in {rel}: "
+                f"Task.immediate={task_count}, Task={patched_task_count}, "
+                f"addImmediateTask={child_count}, addTask={patched_child_count}"
+            )
+        # Do not leave unrecognized overloads in the target file.
+        if "Task.immediate" in source and task_count != source.count("Task.immediate"):
+            raise SystemExit(f"Unknown Task.immediate call in {rel}")
+        if "addImmediateTask" in source and child_count != source.count("addImmediateTask"):
+            raise SystemExit(f"Unknown addImmediateTask call in {rel}")
+        if task_count or child_count:
+            patched = source.replace(old_task, new_task).replace(old_child, new_child)
+            path.write_text(patched, encoding="utf-8")
+            print(f"[patch] {rel}: Task {task_count}, child tasks {child_count}")
+            total += task_count + child_count
+        else:
+            print(f"[skip] concurrency already modified: {rel}")
+    print(f"Concurrency backport: {total} newly replaced call(s)")
+
+
 def main():
     if not (ROOT / "RunCatNeo.xcodeproj" / "project.pbxproj").is_file():
         sys.exit("Copy this script into the root of a RunCatNeo Git checkout first.")
@@ -128,6 +185,7 @@ def main():
         "",
     )
     patch_sortable()
+    patch_immediate_tasks()
     # This App Store product's original bundle ID must not be reused for a personal build.
     replace_exact(
         "RunCatNeo.xcodeproj/project.pbxproj",
