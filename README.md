@@ -1,63 +1,71 @@
-# RunCat Neo → macOS 15 Sequoia backport kit v2 (2026-10-27 build-log fix)
+# RunCat Neo -> macOS 15 Sequoia backport kit v3
 
-This kit is **not a compiled app**. It changes selected source code and supplies an Xcode/macOS GitHub Actions build job. The v2 result has **not** been compiled or tested on macOS 15.6.1. It was prepared against the upstream **main tree SHA `592cd606e735ce20da98d9ae62ecf1a2608635d7`** (Oct 2026). Apache-2.0 upstream license applies to RunCat Neo.
+**Status: source-level patch only; the finished macOS application has NOT been compiled or run-tested on macOS 15.6.1.** This kit provides a patch script and a GitHub Actions macOS build workflow. It targets M1 Max / Apple Silicon (`arm64`). The upstream RunCat Neo code is Apache-2.0 licensed.
 
-## Changes
+Pinned upstream commit: `592cd606e735ce20da98d9ae62ecf1a2608635d7` in `runcat-dev/RunCatNeo`. Do not apply these exact-match patches to a newer upstream revision without reviewing differences.
 
-- **v2 build-log fix:** Replace 7 `Task.immediate` calls with `Task { ... }` and 8 `group.addImmediateTask` calls with `group.addTask { ... }`, resolving all 15 of the observed macOS 26 deployment-target compiler diagnostics in the Model target. These alternatives start asynchronously instead of inline; validate event subscription/updates on macOS 15.
+## What v3 fixes from the second GitHub Actions log
 
-- App and package minimum deployment target: macOS 26 → 15.
-- Omit SwiftUI `windowResizeAnchor` (introduced macOS 26).
-- Omit SwiftUI `labelReservedIconWidth` (introduced macOS 26).
-- Rewrite custom-runner drag/drop reorder from new `DropConfiguration` APIs to macOS 15-compatible `draggable` / `dropDestination`. Drag reordering now happens on *drop*, not while hovering.
-- Change bundle ID to `dev.local.RunCatNeoSequoia` to avoid conflicting with the official product.
-- Keep original `windowResizeBehavior` and `defaultLaunchBehavior`, which are supported on macOS 15.
+On 2026-10-27, the second CI log failed in the `Model` target with eight Swift 6 actor-isolation diagnostics:
 
-## Source setup
+| Source | Number | Affected calls |
+| --- | ---: | --- |
+| `DashboardMenu.swift` | 2 | `updateCurrentRunner`, `update(runnerBundleList:)` |
+| `MetricsBar.swift` | 3 | `updateMetrics`, `updateMetricsBarConfiguration` (twice) |
+| `RunnerBar.swift` | 3 | `update(appearance:)`, `update(runnerBundle:)`, `update(runnerSpeed:)` |
 
-Use an internet-connected environment where GitHub source and Swift Package dependencies can be accessed.
+The v2 patch replaced unavailable `group.addImmediateTask` with `group.addTask`. The resulting child tasks are not implicitly main-actor isolated; their calls to `@MainActor` view-model methods must cross actors. v3 adds the eight required `await` expressions. The Swift compiler explicitly suggested `await` in the uploaded log.
 
-```sh
+Example (within a group child closure):
+
+```swift
+// v2 - fails with: main actor-isolated instance method cannot be called from outside actor
+self?.updateMetrics(from: value)
+// v3 - crosses to MainActor explicitly
+await self?.updateMetrics(from: value)
+```
+
+The log's `LLVM Profile Error: Failed to write file "default.profraw": Operation not permitted` appeared earlier, but the build terminated with exit code 65 for the eight Swift compiler errors. That profiling line is not addressed by this patch.
+
+## Previous v1/v2 compatibility edits retained
+
+- Set macOS deployment target to `15.0` in Xcode project and Swift package.
+- Remove UI modifiers `windowResizeAnchor` and `labelReservedIconWidth` unavailable on macOS 15.
+- Rewrite custom runner drag-and-drop ordering to use older SwiftUI `draggable` and `dropDestination` APIs. Reordering now completes on drop rather than while hovering.
+- Replace 7 occurrences of `Task.immediate` with `Task`, and 8 of `group.addImmediateTask` with `group.addTask`.
+- Use bundle identifier `dev.local.RunCatNeoSequoia` for the personal build so it does not conflict with the official App Store product.
+
+## Re-run with your existing GitHub Actions repository
+
+**You do not need to upload a full copy of the upstream project.** The workflow clones the pinned commit itself.
+
+1. Extract this ZIP on your local computer.
+2. Replace these files in your existing GitHub repository and commit the changes:
+   - `port_sequoia.py`
+   - `build_sequoia.sh`
+   - `.github/workflows/build-sequoia.yml`
+3. In GitHub: **Actions -> Build RunCat Neo for macOS 15 (arm64) -> Run workflow**.
+4. On success, open the run and download the artifact `RunCatNeo-Sequoia-macOS15-arm64`. The artifact contains the app ZIP.
+5. On failure, open the run, download `RunCatNeo-build-log`, or use **... -> Download log archive** if the artifact is absent, and attach the resulting ZIP in ChatGPT.
+
+The build uses `macos-26` and Xcode 26.5 on GitHub-hosted runners to compile against an older macOS 15 deployment target, so the target M1 Max machine does not need Xcode 26 or the App Store. GitHub/Swift package dependencies need to be accessible by the runner, and GitHub Actions usage may be billed according to the repository and plan.
+
+## Optional: build on an Xcode 26.5+ Mac
+
+```bash
 git clone https://github.com/runcat-dev/RunCatNeo.git
 cd RunCatNeo
 git checkout 592cd606e735ce20da98d9ae62ecf1a2608635d7
+# Copy port_sequoia.py and build_sequoia.sh from this kit into the repository root.
+bash build_sequoia.sh
 ```
 
-Copy `port_sequoia.py` and `build_sequoia.sh` into the repository root. Then:
+The `build_sequoia.sh` script patches the checked-out source, invokes Xcode, signs the app ad hoc, verifies `arm64` and reports the minimum system version. It produces `RunCatNeo-Sequoia-macOS15-arm64.zip` only if successful.
 
-```sh
-python3 port_sequoia.py
-```
+## Limits and security notes
 
-### Build on macOS 26 with Xcode 26.5+
-
-```sh
-bash ./build_sequoia.sh
-```
-
-The script creates `RunCatNeo-Sequoia-macOS15-arm64.zip` if compilation/signing succeeds. An Xcode 26.5 toolchain is needed to handle the upstream Swift 6.2 package manifests; **Xcode 26.5 generally requires a newer macOS than 15.6.1**. Building on a newer Mac or macOS CI runner and transferring the app to the M1 Max macOS 15 machine is the recommended approach.
-
-### Update an existing Actions repository
-
-If you already ran v1 and got `Task.immediate`/`addImmediateTask` availability errors, overwrite `port_sequoia.py` and `.github/workflows/build-sequoia.yml` with the corresponding v2 kit files. Commit and rerun the workflow. The original upstream commit remains pinned, so there is no need to remove and re-add the repo.
-
-### Build in GitHub Actions (no App Store)
-
-1. Create a GitHub repository you control (it can be empty; no fork required). Add the two root scripts and `.github/workflows/build-sequoia.yml` from this kit, commit and push.
-2. In Actions, enable workflows for this repository if needed. Run **Build RunCat Neo for macOS 15 (arm64)** via **Run workflow**. The job checks out the exact upstream commit and applies the patch automatically.
-3. If the job succeeds, download `RunCatNeo-Sequoia-macOS15-arm64` under the run's **Artifacts** section. Inside is `RunCatNeo-Sequoia-macOS15-arm64.zip`.
-4. Verify the SHA-256 checksum, review the code and executable trust/security state, and transfer through your organization's approved process. The app is ad-hoc signed, not Developer-ID signed or notarized; macOS Gatekeeper or organization controls may block it.
-
-**No Apple Developer membership or App Store is needed to try a personal build.** GitHub Actions usage may be metered, depending on repository visibility and account plan. GitHub and Swift dependencies must be reachable by the build runner; the target corporate Mac itself does not need App Store access.
-
-## Limitations / validation
-
-- **No macOS compiler was available in this preparation environment**, so build success is not guaranteed. The build job may report additional SDK availability or Swift 6 strict-concurrency errors. Address these errors in the fork and rerun; do not treat the patch kit as a verified binary.
-- Verify the compiled macOS deployment version is `15.0` and binary architecture `arm64` (the script prints both). Test on macOS 15.6.1 for menu-bar animation, CPU speed changes, custom runners, settings, launch-at-login, CPU/memory monitoring and Custom Metrics.
-- The donation/subscription UI relies on App Store products and may not work correctly in a separately signed personal build. Do not use it for purchases.
-- If running at macOS 15.6.1 is impossible after compiling, the problem may be an OS-26 symbol used at runtime or a dependency's compatibility bug. The macOS build machine alone cannot prove runtime compatibility.
-- Avoid manually removing Gatekeeper protection for unknown or unaudited binaries; follow organizational app security policies.
-
-## What the uploaded October 27 build log proved
-
-The GitHub Actions runner got as far as the `Model` target; Xcode 26.5 compiled for `arm64-apple-macos15.0` and reported precisely 15 platform-availability errors across 7 Store files: 7 calls to `Task.immediate` and 8 to `group.addImmediateTask`. An `LLVM Profile Error: Failed to write default.profraw` line also appeared, but it was not the reason Xcode exited with code 65. The v2 patch directly addresses the 15 compile errors; the remaining UI target, packaging, and execution on macOS 15 have not been verified.
+- The v3 patch script passed syntax checks and an isolated source-fixture test covering 15 concurrency API replacements, eight actor crossings, idempotence and unexpected-source rejection. **These tests do not constitute a successful Xcode build** or proof that the app runs on macOS 15.6.1. Further UI-stage diagnostics are possible.
+- Test the generated app on macOS 15.6.1: menu bar rendering, runner speed, CPU/memory display, settings, custom runners, launch-at-login and wake-from-sleep.
+- The personal build is **ad-hoc signed, not notarized or Developer-ID signed**. macOS Gatekeeper or company endpoint controls may prohibit execution. Follow company app-install/security policies; do not blindly bypass protective prompts.
+- App Store purchase, donation and subscription flows may not function in a separately built app. Do not rely on them for financial transactions.
+- The upstream project and all third-party Swift packages are downloaded during the GitHub Actions build. Use an appropriate approved external-network build environment for internal deployment.

@@ -3,7 +3,8 @@
 
 Verified against upstream main tree SHA 592cd606e735ce20da98d9ae62ecf1a2608635d7.
 Run from the repository root. No non-stdlib Python dependencies.
-v2: also replaces Task.immediate and TaskGroup.addImmediateTask (15 compiler errors).
+v2: replaces Task.immediate and TaskGroup.addImmediateTask (15 errors).
+v3: adds actor hops to 8 state updates inside task-group children.
 This is a source-compatibility attempt, NOT a tested macOS executable.
 """
 from pathlib import Path
@@ -160,6 +161,47 @@ def patch_immediate_tasks():
     print(f"Concurrency backport: {total} newly replaced call(s)")
 
 
+
+def patch_main_actor_updates():
+    """Backport Swift 6 main-actor isolation after replacing addImmediateTask.
+
+    With the v2 addTask replacements, child closures are not MainActor-isolated;
+    calls to @MainActor-isolated view-model methods must be explicit.
+    Adding `await` performs the actor hop. Exact-match guards protect against
+    silently patching different upstream versions. (8 errors in second log.)
+    """
+    base = "LocalPackage/Sources/Model/Stores/"
+    fixes = {
+        "DashboardMenu.swift": (
+            "self?.updateCurrentRunner(from: value)",
+            "self?.update(runnerBundleList: value)",
+        ),
+        "MetricsBar.swift": (
+            "self?.updateMetrics(from: value)",
+            "self?.updateMetricsBarConfiguration()",
+        ),
+        "RunnerBar.swift": (
+            "self?.update(appearance: value)",
+            "self?.update(runnerBundle: value)",
+            "self?.update(runnerSpeed: value)",
+        ),
+    }
+    # The MetricsBar configuration updater appears in two different children.
+    expected_counts = {("MetricsBar.swift", "self?.updateMetricsBarConfiguration()"): 2}
+    total = 0
+    for filename, methods in fixes.items():
+        for call in methods:
+            expected = expected_counts.get((filename, call), 1)
+            replace_exact(
+                base + filename,
+                "                            " + call,
+                "                            await " + call,
+                expected=expected,
+            )
+            total += expected
+    print(f"Actor-isolation backport: {total} expected `await` call site(s)")
+
+
 def main():
     if not (ROOT / "RunCatNeo.xcodeproj" / "project.pbxproj").is_file():
         sys.exit("Copy this script into the root of a RunCatNeo Git checkout first.")
@@ -186,6 +228,7 @@ def main():
     )
     patch_sortable()
     patch_immediate_tasks()
+    patch_main_actor_updates()
     # This App Store product's original bundle ID must not be reused for a personal build.
     replace_exact(
         "RunCatNeo.xcodeproj/project.pbxproj",
