@@ -1,0 +1,26 @@
+name: Build RunCat Neo for macOS 15 (arm64)
+on:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 40
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.5.0.app/Contents/Developer
+      RUNCAT_NEO_SHA: 592cd606e735ce20da98d9ae62ecf1a2608635d7
+    steps:
+      - uses: actions/checkout@v6
+      - name: Fetch pinned RunCat Neo source
+        run: |
+          git clone https://github.com/runcat-dev/RunCatNeo.git upstream
+          git -C upstream checkout "$RUNCAT_NEO_SHA"
+          cp port_sequoia.py build_sequoia.sh upstream/
+      - name: Build for Sequoia
+        working-directory: upstream
+        run: bash ./build_sequoia.sh
+      - name: Upload app archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: RunCatNeo-Sequoia-macOS15-arm64
+          path: upstream/RunCatNeo-Sequoia-macOS15-arm64.zip
+          if-no-files-found: error
