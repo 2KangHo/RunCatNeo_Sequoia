@@ -5,6 +5,7 @@ Verified against upstream main tree SHA 592cd606e735ce20da98d9ae62ecf1a2608635d7
 Run from the repository root. No non-stdlib Python dependencies.
 v2: replaces Task.immediate and TaskGroup.addImmediateTask (15 errors).
 v3: adds actor hops to 8 state updates inside task-group children.
+v4: resolves SwiftUI enumerated collections and button roles unavailable on macOS 15.
 This is a source-compatibility attempt, NOT a tested macOS executable.
 """
 from pathlib import Path
@@ -202,6 +203,54 @@ def patch_main_actor_updates():
     print(f"Actor-isolation backport: {total} expected `await` call site(s)")
 
 
+def patch_user_interface_compatibility():
+    """Resolve UserInterface errors seen on the third CI build.
+
+    macOS 26 adds RandomAccessCollection conformance to EnumeratedSequence;
+    SwiftUI ForEach on older macOS needs a concrete collection. Materialize
+    the enumerated values as an Array, preserving offset-based identities.
+
+    New label-less `Button(role: .cancel)` and `.confirm` are also unavailable
+    on macOS 15. Preserve the cancel semantic with an explicit localized
+    label, and use an ordinary Button inside .confirmationAction toolbar.
+    """
+    ui = "LocalPackage/Sources/UserInterface/Views/"
+    replace_exact(
+        ui + "RunnerBar/Dashboard/CustomMetricsCardView.swift",
+        r"ForEach(snapshot.metrics.enumerated(), id: \.offset)",
+        r"ForEach(Array(snapshot.metrics.enumerated()), id: \.offset)",
+    )
+    replace_exact(
+        ui + "Settings/RunnerSettings/FrameImagesCollectionView.swift",
+        r"ForEach(store.frameImages.enumerated(), id: \.element)",
+        r"ForEach(Array(store.frameImages.enumerated()), id: \.element)",
+    )
+    editor = ui + "Settings/RunnerSettings/CustomRunnerEditorView.swift"
+    replace_exact(
+        editor,
+        """                    Button(role: .cancel) {
+                        Task {
+                            await store.send(.cancelButtonTapped)
+                        }
+                    }
+""",
+        """                    Button(role: .cancel) {
+                        Task {
+                            await store.send(.cancelButtonTapped)
+                        }
+                    } label: {
+                        Text("cancel", bundle: .module)
+                    }
+""",
+    )
+    replace_exact(
+        editor,
+        "                    Button(role: .confirm) {",
+        "                    Button {",
+    )
+    print("UI compatibility backport: 2 collections + 2 button edits")
+
+
 def main():
     if not (ROOT / "RunCatNeo.xcodeproj" / "project.pbxproj").is_file():
         sys.exit("Copy this script into the root of a RunCatNeo Git checkout first.")
@@ -229,6 +278,7 @@ def main():
     patch_sortable()
     patch_immediate_tasks()
     patch_main_actor_updates()
+    patch_user_interface_compatibility()
     # This App Store product's original bundle ID must not be reused for a personal build.
     replace_exact(
         "RunCatNeo.xcodeproj/project.pbxproj",
