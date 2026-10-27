@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Backport selected RunCat Neo macOS 26-only UI usages to macOS 15.
+"""Backport selected RunCat Neo macOS 26-only APIs to macOS 15.
 
 Verified against upstream main tree SHA 592cd606e735ce20da98d9ae62ecf1a2608635d7.
 Run from the repository root. No non-stdlib Python dependencies.
@@ -117,6 +117,28 @@ def main():
         ".macOS(.v26),",
         ".macOS(.v15),",
     )
+    for store in (
+        "CustomMetricsSettings",
+        "Dashboard",
+        "DashboardMenu",
+        "MetricsBar",
+        "MetricsBarSettings",
+        "MetricsSettings",
+        "RunnerBar",
+    ):
+        replace_exact(
+            f"LocalPackage/Sources/Model/Stores/{store}.swift",
+            "Task.immediate {",
+            "Task {",
+        )
+    for store, count in (("DashboardMenu", 2), ("MetricsBar", 3), ("RunnerBar", 3)):
+        # Unlike addImmediateTask, addTask does not inherit the caller's actor.
+        replace_exact(
+            f"LocalPackage/Sources/Model/Stores/{store}.swift",
+            "group.addImmediateTask {",
+            "group.addTask { @MainActor in",
+            expected=count,
+        )
     replace_exact(
         "LocalPackage/Sources/UserInterface/Scenes/SettingsWindowScene.swift",
         "                .windowResizeAnchor(.topLeading)\n",

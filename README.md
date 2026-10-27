@@ -5,6 +5,7 @@ This kit is **not a compiled app**. It changes selected source code and supplies
 ## Changes
 
 - App and package minimum deployment target: macOS 26 → 15.
+- Replace macOS 26-only `Task.immediate` / `addImmediateTask` with `Task` / `addTask`, preserving main-actor isolation. Tasks are scheduled normally rather than starting synchronously.
 - Omit SwiftUI `windowResizeAnchor` (introduced macOS 26).
 - Omit SwiftUI `labelReservedIconWidth` (introduced macOS 26).
 - Rewrite custom-runner drag/drop reorder from new `DropConfiguration` APIs to macOS 15-compatible `draggable` / `dropDestination`. Drag reordering now happens on *drop*, not while hovering.
